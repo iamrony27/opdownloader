@@ -105,7 +105,7 @@ If the connection drops, rediscover it with `avahi-browse -rt _adb-tls-connect._
 
 Analysis runs once with `yt-dlp --dump-single-json` and is cached for 2 hours (`cacheDir/yt_info/<sha256>.json`). Downloads reuse it via `--load-info-json`, so pressing **Download** starts immediately instead of re-parsing the page. A stale/expired cache is deleted and retried with a fresh extraction.
 
-Pornhub's signed HLS URLs expire within minutes — the chosen quality height is stored with the item and the page is re-read at download start to swap in a fresh URL for the same resolution.
+Some streaming sites sign their HLS URLs with short-lived tokens — the chosen quality height is stored with the item and the page is re-read at download start to swap in a fresh URL for the same resolution.
 
 <details>
 <summary><b>Progress, pause & restart internals</b></summary>
@@ -113,7 +113,7 @@ Pornhub's signed HLS URLs expire within minutes — the chosen quality height is
 - Raw `[download]` lines are parsed in-app (the bundled library's legacy regex misses current yt-dlp output), and `cacheDir/ytdlp_<id>` is polled every 450 ms for real byte growth. This keeps speed/ETA/bars moving even through merged video+audio jobs where yt-dlp resets its percentage.
 - Pausing calls `YoutubeDL.destroyProcessById`; resume reuses the same cache dir with `--continue`.
 - On process start, any `QUEUED`/`DOWNLOADING` item becomes `PAUSED` ("Interrupted by app restart") so a killed process can't leave a ghost job.
-- HLS downloads use bundled FFmpeg (`--hls-prefer-ffmpeg`); `phncdn.com`/`sabtpledge.com` segments get `Referer: https://www.pornhub.com/`.
+- HLS downloads use bundled FFmpeg (`--hls-prefer-ffmpeg`) and send the origin site's `Referer` header when a CDN requires it.
 - MediaStore rejects `application/octet-stream` on API 37 — the publisher falls back to `/sdcard/Android/data/com.opdownloader.app/files/Download/oP Downloader/`.
 
 </details>
@@ -131,12 +131,12 @@ The **Browser** tab is a real in-app browser with persistent cookies/logins, bac
 - **Auto-skip ads** clicks Skip/Close controls and, during HTML5 ad reels, mutes + raises playback to 16× until the ad clears — it never seeks the video.
 
 <details>
-<summary><b>When the analyzer is blocked (e.g. PornHub)</b></summary>
+<summary><b>When the analyzer is blocked by server-side fingerprinting</b></summary>
 
-Some extractors are fingerprinted server-side — PornHub's page endpoint answers yt-dlp with **HTTP 403** while a normal browser session loads fine. Use the sniffer instead:
+Some extractors are fingerprinted server-side — the site's page endpoint answers yt-dlp with **HTTP 403** while a normal browser session loads fine. Use the sniffer instead:
 
 1. Browser tab → open the video page → wait for media chips.
-2. Tap the chip for the **full VOD** stream (`master.m3u8` under `em-h.phncdn.com`, or the 720P `index-v1-a1.m3u8`).
+2. Tap the chip for the **full VOD** stream (the site's `master.m3u8`, or a 720P `index-v1-a1.m3u8` variant).
 3. Avoid `edge-hls...` playlists starting at a non-zero `#EXT-X-MEDIA-SEQUENCE` — those are short live-edge windows.
 4. Analyze → choose quality → download. Verified: a 13:16 video → 77 MB 480p H.264/AAC MP4.
 
@@ -203,7 +203,7 @@ Tested on an Android 15 / API 37 arm64 device over wireless adb:
 
 | Limitation | Workaround / status |
 |---|---|
-| PornHub-style TLS fingerprinting blocks paste-field analysis | Use the Web Sniffer flow above; `curl_cffi` impersonation is planned |
+| TLS fingerprinting blocks paste-field analysis on some sites | Use the Web Sniffer flow above; `curl_cffi` impersonation is planned |
 | Private / age-restricted YouTube | Needs exported cookies (`--cookies`) — not wired into the UI yet |
 | DRM-protected streams | Out of scope for an in-app WebView |
 | Unknown MIME types | Fall back to the app-specific folder (accessible in-app) |
