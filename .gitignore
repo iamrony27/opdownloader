@@ -1,0 +1,26 @@
+# Gradle / Kotlin build output
+.gradle/
+.kotlin/
+build/
+**/build/
+local.properties
+
+# Signing secrets — never publish these
+*.jks
+*.keystore
+keystore.properties
+
+# IDE / local tooling
+.idea/
+*.iml
+.agents/
+.cloud-attachments/
+.freebuff/
+
+# Python caches
+__pycache__/
+*.pyc
+
+# OS files
+.DS_Store
+Thumbs.db
