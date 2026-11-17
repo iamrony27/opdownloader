@@ -13,6 +13,8 @@ Paste a link or sniff a stream from the built-in browser — oP Downloader handl
 [![stack](https://img.shields.io/badge/stack-Kotlin%20%2B%20Compose-A97BFF?style=flat-square)](#architecture)
 [![engine](https://img.shields.io/badge/engine-OkHttp%20%2B%20yt--dlp%20%2B%20FFmpeg-F59E0B?style=flat-square)](#how-it-works)
 
+[![Get it on Orion Store](https://raw.githubusercontent.com/RookieEnough/Orion-Store/refs/heads/main/assets/orion-badge.png)](https://rookieenough.github.io/Orion-Data/app/?id=opdownloader)
+
 <a href="https://github.com/iamrony27/opdownloader/releases/latest"><strong>⬇️ Download APK</strong></a>
 &nbsp;·&nbsp; <a href="#quick-start">Quick start</a>
 &nbsp;·&nbsp; <a href="#features">Features</a>
