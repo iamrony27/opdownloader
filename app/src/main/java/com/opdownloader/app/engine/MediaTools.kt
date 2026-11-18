@@ -12,6 +12,7 @@ import com.opdownloader.app.data.safeFileName
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
+import com.yausername.youtubedl_android.mapper.VideoFormat
 import com.yausername.youtubedl_android.mapper.VideoInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -320,6 +321,66 @@ object MediaTools {
         return url
     }
 
+    private data class HlsProbe(val selector: String, val sizeBytes: Long, val liveEdge: Boolean)
+
+    /**
+     * Resolves an HLS master playlist into the exact variant for one height and
+     * estimates its bytes from BANDWIDTH. This makes the picker show the size of
+     * the stream that actually gets downloaded, and lets us drop sliding-window
+     * live playlists instead of offering them as complete videos.
+     */
+    private fun probeHlsPlaylist(url: String, height: Int, durationSec: Int): HlsProbe? {
+        val req = runCatching {
+            Request.Builder()
+                .url(url)
+                .header("User-Agent", USER_AGENT)
+                .header("Referer", "https://www.pornhub.com/")
+                .header("Origin", "https://www.pornhub.com")
+                .build()
+        }.getOrNull() ?: return null
+        val body = runCatching {
+            Net.probeClient.newCall(req).execute().use { response ->
+                if (response.isSuccessful) response.body?.string().orEmpty() else ""
+            }
+        }.getOrDefault("")
+        if (body.isBlank() || !body.contains("#EXTM3U")) return null
+
+        // A media-sequence greater than zero with no ENDLIST is a live sliding
+        // window. Downloading it would silently produce a truncated clip.
+        val sequence = Regex("""#EXT-X-MEDIA-SEQUENCE:(\d+)""")
+            .find(body)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+        if (sequence > 0 && !body.contains("#EXT-X-ENDLIST")) {
+            return HlsProbe(url, 0L, true)
+        }
+
+        val lines = body.lineSequence().toList()
+        var bestBandwidth = 0L
+        var bestUrl = url
+        for (i in lines.indices) {
+            val line = lines[i]
+            if (!line.startsWith("#EXT-X-STREAM-INF")) continue
+            val bandwidth = Regex("""BANDWIDTH=(\d+)""")
+                .find(line)?.groupValues?.getOrNull(1)?.toLongOrNull() ?: 0L
+            val resolution = Regex("""RESOLUTION=(\d+)x(\d+)""").find(line)
+            val w = resolution?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+            val h = resolution?.groupValues?.getOrNull(2)?.toIntOrNull() ?: 0
+            if (w <= 0 || h <= 0 || minOf(w, h) != height) continue
+            val child = lines.getOrNull(i + 1)?.trim().orEmpty()
+            if (child.isBlank() || child.startsWith("#")) continue
+            val resolved = runCatching {
+                url.toHttpUrlOrNull()?.newBuilder(child)?.build()?.toString()
+            }.getOrNull() ?: child
+            if (bandwidth > bestBandwidth) {
+                bestBandwidth = bandwidth
+                bestUrl = resolved
+            }
+        }
+        val bytes = if (bestBandwidth > 0 && durationSec > 0) {
+            bestBandwidth * durationSec.toLong() / 8L
+        } else 0L
+        return HlsProbe(bestUrl, bytes, false)
+    }
+
     private fun analyzePornhubDirect(url: String): AnalysisResult? {
         val viewkeyRegex = Regex("""[?&]viewkey=([a-zA-Z0-9]+)""")
         val embedRegex = Regex("""/embed/([a-zA-Z0-9]+)""")
@@ -381,14 +442,24 @@ object MediaTools {
                                 if (it > 0) it else def.path("quality").asText("").filter { c -> c.isDigit() }.toIntOrNull() ?: 0
                             }
                             if (h > 0 && seenHeights.add(h)) {
+                                // Resolve the master playlist to one exact variant.
+                                // Otherwise yt-dlp grabs the highest rendition and
+                                // both the resolution and the size are wrong.
+                                val probe = probeHlsPlaylist(videoUrl, h, duration)
+                                if (probe?.liveEdge == true) continue // sliding-window live stream, not a complete video
+                                val resolvedUrl = probe?.selector ?: videoUrl
+                                val estimated = probe?.sizeBytes ?: 0L
                                 formats.add(
                                     QualityOption(
                                         id = "ph_$h",
                                         label = qualityLabel(h),
-                                        sublabel = "${h}p • MP4",
-                                        sizeBytes = 0L,
+                                        sublabel = buildString {
+                                            append(h).append("p • MP4")
+                                            if (estimated > 0) append(" • ~").append(humanBytes(estimated))
+                                        },
+                                        sizeBytes = estimated,
                                         audioOnly = false,
-                                        selector = videoUrl,
+                                        selector = resolvedUrl,
                                         ext = "mp4",
                                         height = h,
                                     )
@@ -420,6 +491,7 @@ object MediaTools {
         formats.sortByDescending { it.height }
 
         val bestUrl = formats.first().selector
+        val bestSize = formats.first().sizeBytes
         val resultFormats = ArrayList<QualityOption>()
         resultFormats.addAll(formats)
         resultFormats.add(
@@ -427,7 +499,7 @@ object MediaTools {
                 id = "best",
                 label = "Best available",
                 sublabel = "Highest quality • MP4",
-                sizeBytes = 0L,
+                sizeBytes = bestSize,
                 selector = bestUrl,
                 ext = "mp4",
             )
@@ -572,7 +644,7 @@ object MediaTools {
             (info.webpageUrl.orEmpty().contains("fb.watch", ignoreCase = true)) ||
             (info.extractorKey ?: info.extractor).orEmpty().contains("facebook", ignoreCase = true)
 
-        fun extractHeight(f: com.yausername.youtubedl_android.mapper.VideoFormat): Int {
+        fun extractHeight(f: VideoFormat): Int {
             if (f.height > 0 && f.width > 0) {
                 return minOf(f.height, f.width)
             }
@@ -593,47 +665,92 @@ object MediaTools {
             return match?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
         }
 
+        // The old estimate took the BIGGEST file at each height (usually h264),
+        // but bestvideo actually downloads the preferred codec (usually AV1/VP9),
+        // which is much smaller. Pick the exact format once and use it for BOTH the
+        // displayed size and the download selector so they always agree.
+        fun sizeOf(f: VideoFormat): Long {
+            val exact = maxOf(f.fileSize, f.fileSizeApproximate)
+            if (exact > 0) return exact
+            val kbps = maxOf(f.tbr, f.abr)
+            return if (kbps > 0 && info.duration > 0) {
+                (kbps.toLong() * 1000L / 8L) * info.duration.toLong()
+            } else 0L
+        }
+
+        fun videoRank(f: VideoFormat): Int = when {
+            f.vcodec?.startsWith("av01", true) == true -> 4
+            f.vcodec?.startsWith("vp9", true) == true || f.vcodec?.startsWith("vp09", true) == true -> 3
+            f.vcodec?.startsWith("h264", true) == true || f.vcodec?.startsWith("avc", true) == true -> 2
+            f.vcodec.isNullOrBlank() || f.vcodec == "none" -> -1
+            else -> 1
+        }
+
+        fun audioRank(f: VideoFormat): Int = when {
+            f.acodec?.contains("opus", true) == true -> 4
+            f.acodec?.contains("vorbis", true) == true -> 3
+            f.acodec?.contains("mp4a", true) == true -> 2
+            f.acodec.isNullOrBlank() || f.acodec == "none" -> -1
+            else -> 1
+        }
+
+        val bestAudio = formats
+            .filter { audioRank(it) > 0 && sizeOf(it) > 0 }
+            .sortedWith(compareBy<VideoFormat> { audioRank(it) }.thenBy { sizeOf(it) })
+            .lastOrNull()
+        val audioSelector = bestAudio?.formatId?.let { "$it/bestaudio/best" } ?: "bestaudio/best"
+        val audioBytes = bestAudio?.let(::sizeOf) ?: 0L
+
         val heights = formats
             .filter {
                 val h = extractHeight(it)
                 val isExplicit = it.formatId.equals("hd", true) || it.formatId.equals("sd", true)
                 h > 0 && (isPh || isFb || isExplicit || (it.vcodec != "none" && !it.vcodec.isNullOrBlank()))
             }
-            .map { extractHeight(it) }
+            .map(::extractHeight)
             .distinct()
             .sortedDescending()
 
-        val bestAudioSize = formats
-            .filter { (it.acodec != null && it.acodec != "none") && (it.vcodec == null || it.vcodec == "none") }
-            .maxOfOrNull { maxOf(it.fileSize, it.fileSizeApproximate) } ?: 0L
-
         heights.take(8).forEach { height ->
-            val matching = formats.filter { extractHeight(it) == height }
-            val videoSize = matching.maxOfOrNull { maxOf(it.fileSize, it.fileSizeApproximate) } ?: 0L
-            val estimated = if (videoSize > 0) videoSize + (if (bestAudioSize > 0) bestAudioSize else 0) else 0L
+            val matching = formats.filter { extractHeight(it) == height && videoRank(it) > 0 }
+            val video = matching
+                .sortedWith(compareBy<VideoFormat> { videoRank(it) }.thenBy { it.fps }.thenBy { sizeOf(it) })
+                .lastOrNull()
+            val videoBytes = video?.let(::sizeOf) ?: 0L
+            val needsAudio = video != null && bestAudio != null &&
+                (video.acodec.isNullOrBlank() || video.acodec == "none")
+            val estimated = if (videoBytes > 0) videoBytes + if (needsAudio) audioBytes else 0L else 0L
+
             val otherDim = (height * 16 + 8) / 9 + 40
-            val selector = if (isPh) {
+            val generic = if (isPh) {
                 "best[height<=$height]/bestvideo[height<=$height]+bestaudio/best"
             } else {
-                // `height` here is the SHORT side (min(width, height)). The first
-                // alternative must bound the long side with `width` and the short
-                // side with `height`. (They were swapped before, so yt-dlp matched
-                // a lower-resolution stream — wrong quality and wrong size.)
-                // The second alternative covers portrait videos, where the short
-                // side is the width.
                 "bestvideo[height<=$height][width<=$otherDim]+bestaudio" +
                     "/bestvideo[width<=$height][height<=$otherDim]+bestaudio" +
                     "/bestvideo[height<=$height]+bestaudio" +
                     "/bestvideo[width<=$height]+bestaudio" +
                     "/best[height<=$height]/best"
             }
+            // Exact format ids first so the bytes shown are the bytes downloaded.
+            // The generic filter stays as a fallback if a cached extraction expires
+            // and yt-dlp re-parses the page with new format ids.
+            val selector = buildList {
+                if (video != null && needsAudio) {
+                    val vid = video.formatId
+                    val aid = bestAudio?.formatId
+                    if (!vid.isNullOrBlank() && !aid.isNullOrBlank()) add("$vid+$aid")
+                }
+                if (!video?.formatId.isNullOrBlank()) add(video!!.formatId!!)
+                add(generic)
+            }.joinToString("/")
+
             result.add(
                 QualityOption(
                     id = "h$height",
                     label = qualityLabel(height),
                     sublabel = buildString {
                         append(height).append("p")
-                        val fps = matching.maxOfOrNull { it.fps } ?: 0
+                        val fps = video?.fps?.takeIf { it > 0 } ?: matching.maxOfOrNull { it.fps } ?: 0
                         if (fps > 0) append(" • ").append(fps).append("fps")
                         append(" • MP4")
                     },
@@ -662,9 +779,9 @@ object MediaTools {
                 id = "audio-mp3",
                 label = "Audio only (MP3)",
                 sublabel = "320 kbps • MP3",
-                sizeBytes = if (bestAudioSize > 0) bestAudioSize else 0L,
+                sizeBytes = audioBytes,
                 audioOnly = true,
-                selector = "bestaudio/best",
+                selector = audioSelector,
                 ext = "mp3",
             )
         )
@@ -673,15 +790,14 @@ object MediaTools {
                 id = "audio-m4a",
                 label = "Audio only (M4A)",
                 sublabel = "Original audio • M4A",
-                sizeBytes = bestAudioSize,
+                sizeBytes = audioBytes,
                 audioOnly = true,
-                selector = "bestaudio[ext=m4a]/bestaudio/best",
+                selector = audioSelector,
                 ext = "m4a",
             )
         )
         return result
     }
-
     private fun qualityLabel(height: Int): String = when {
         height >= 2160 -> "2160p • 4K"
         height >= 1440 -> "1440p • 2K"

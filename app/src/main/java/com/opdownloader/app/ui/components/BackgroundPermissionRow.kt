@@ -2,7 +2,6 @@ package com.opdownloader.app.ui.components
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
@@ -25,30 +24,31 @@ fun isBackgroundAllowed(context: Context): Boolean {
     return manager.isIgnoringBatteryOptimizations(context.packageName)
 }
 
-/** System dialog that grants the battery-optimization exemption. */
-fun backgroundRequestIntent(context: Context): Intent? =
+/**
+ * Opens the system battery-optimization list. The user picks oP Downloader and
+ * chooses "Don't optimize". This needs no permission — the old
+ * ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS dialog required
+ * REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, a known Play Protect risk signal for
+ * apps installed outside Google Play. The foreground download service already
+ * keeps transfers alive; this setting only helps on aggressive ROMs.
+ */
+fun backgroundSettingsIntent(context: Context): Intent? =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-            .setData(Uri.parse("package:${context.packageName}"))
+        Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
     } else {
         null
     }
 
-/** Opens the system list where the user can re-enable optimization later. */
+/** Opens the system list where the user can change or re-enable optimization. */
 fun openBackgroundSettings(context: Context) {
-    val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-    } else {
-        Intent(Settings.ACTION_SETTINGS)
-    }
+    val intent = backgroundSettingsIntent(context) ?: Intent(Settings.ACTION_SETTINGS)
     runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 }
 
 /**
- * Settings row for the "run in background" permission. Turning it on opens the
- * Android battery dialog; turning it off opens the system settings because
- * there is no public intent to silently re-enable optimizations. The switch is
- * visual only - the whole row owns the click so the dialog opens exactly once.
+ * Settings row for background execution. Both directions open the system
+ * battery-optimization list; there is no public intent to change the setting
+ * silently. The switch is visual only - the whole row owns the click.
  */
 @Composable
 fun BackgroundPermissionRow() {
@@ -61,7 +61,7 @@ fun BackgroundPermissionRow() {
     }
 
     fun request() {
-        val intent = backgroundRequestIntent(context)
+        val intent = backgroundSettingsIntent(context)
         if (intent == null) {
             openBackgroundSettings(context)
             return

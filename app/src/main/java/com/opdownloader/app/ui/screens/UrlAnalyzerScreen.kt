@@ -569,7 +569,7 @@ private fun QualityRow(option: QualityOption, icon: Boolean = false, onClick: ()
                         .background(colors.primary.copy(alpha = 0.14f))
                         .padding(horizontal = 8.dp, vertical = 3.dp),
                 ) {
-                    Text("GET", color = colors.primary, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold)
+                    Text("Download", color = colors.primary, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold)
                 }
             }
         }

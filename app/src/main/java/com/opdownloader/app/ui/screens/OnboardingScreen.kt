@@ -43,7 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.opdownloader.app.ui.components.KineticButton
-import com.opdownloader.app.ui.components.backgroundRequestIntent
+import com.opdownloader.app.ui.components.backgroundSettingsIntent
 import com.opdownloader.app.ui.components.isBackgroundAllowed
 import com.opdownloader.app.ui.theme.LocalAppColors
 
@@ -66,7 +66,7 @@ private val steps = listOf(
     ),
     OnboardingStep(
         "Background Downloads",
-        "Allow notifications and battery exemption so transfers keep running with the screen off. Files land in your public Downloads folder or gallery.",
+        "Allow notifications so transfers keep running with the screen off. On the next screen you can also set oP Downloader to 'Don't optimize' for aggressive battery managers. Files land in your public Downloads folder or gallery.",
         Icons.Default.Notifications,
     ),
 )
@@ -78,15 +78,16 @@ fun OnboardingScreen(onFinished: () -> Unit) {
     var step by remember { mutableIntStateOf(0) }
     val stepData = steps[step]
 
-    // After notifications, ask for the battery exemption so downloads also
-    // survive with the screen off. Both prompts happen only on the final step.
+    // After notifications, open the battery-optimization list so downloads also
+    // survive with the screen off on aggressive ROMs. Both prompts happen only
+    // on the final step. No permission is requested.
     val backgroundLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { onFinished() }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) {
-        val backgroundIntent = backgroundRequestIntent(context)
+        val backgroundIntent = backgroundSettingsIntent(context)
         if (backgroundIntent != null && !isBackgroundAllowed(context)) {
             runCatching { backgroundLauncher.launch(backgroundIntent) }.onFailure { onFinished() }
         } else {
@@ -105,7 +106,7 @@ fun OnboardingScreen(onFinished: () -> Unit) {
         if (needsPermission) {
             permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            val backgroundIntent = backgroundRequestIntent(context)
+            val backgroundIntent = backgroundSettingsIntent(context)
             if (backgroundIntent != null && !isBackgroundAllowed(context)) {
                 runCatching { backgroundLauncher.launch(backgroundIntent) }.onFailure { onFinished() }
             } else {

@@ -18,8 +18,8 @@ android {
         applicationId = "com.opdownloader.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 11
-        versionName = "1.1.0"
+        versionCode = 12
+        versionName = "1.2.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -32,6 +32,11 @@ android {
             storePassword = releaseKeystore.getProperty("storePassword")
             keyAlias = releaseKeystore.getProperty("keyAlias")
             keyPassword = releaseKeystore.getProperty("keyPassword")
+            // Explicitly enable all signing schemes so sideloaded installs on
+            // older and newer Android versions verify without warnings.
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
         }
     }
 

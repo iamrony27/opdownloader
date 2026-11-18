@@ -8,7 +8,7 @@
 
 Paste a link or sniff a stream from the built-in browser — oP Downloader handles direct files and 1000+ video sites with real multi-threaded extraction, quality selection, and automatic MediaStore publishing.
 
-[![version](https://img.shields.io/badge/version-1.1.0-7C3AED?style=flat-square)](https://github.com/iamrony27/opdownloader/releases/latest)
+[![version](https://img.shields.io/badge/version-1.2.0-7C3AED?style=flat-square)](https://github.com/iamrony27/opdownloader/releases/latest)
 [![Android](https://img.shields.io/badge/Android-API%2026%2B-3DDC84?style=flat-square)](https://developer.android.com/)
 [![stack](https://img.shields.io/badge/stack-Kotlin%20%2B%20Compose-A97BFF?style=flat-square)](#architecture)
 [![engine](https://img.shields.io/badge/engine-OkHttp%20%2B%20yt--dlp%20%2B%20FFmpeg-F59E0B?style=flat-square)](#how-it-works)
@@ -47,11 +47,17 @@ Paste a link or sniff a stream from the built-in browser — oP Downloader handl
 | 🕵️ **Web Sniffer** | Floating, draggable detector over a full in-app browser. Size-probed results with filters, HLS/DASH support, and auto ad-skip. |
 | 🔁 **Resilient transfers** | Pause/resume from `.part` files, auto-retry, restart recovery, Wi-Fi-only mode, configurable concurrency (1–5). |
 | 📁 **Clean file output** | Published to public `Movies/oP Downloader`, `Music/oP Downloader`, and `Download/oP Downloader` collections, with a safe app-specific fallback. |
-| 🔋 **Built for the background** | Foreground service + live notification, battery-optimization exemption request, screen-off continuity. |
+| 🔋 **Built for the background** | Foreground service + live notification, battery-settings shortcut, screen-off continuity. |
 | 🎨 **Polished UI** | Compose Material 3, purple `oP` brand mark, Android 12+ splash, adaptive launcher icon, dark/light/system themes. |
 | ⭐ **Community-friendly** | GitHub star card, once-after-3-days star prompt, in-app update checker backed by GitHub Releases. |
 
 **Package:** `com.opdownloader.app` · Old installs (`com.premiumdownloader`, `com.premiumdownloader.pro`) stay separate — their history is untouched.
+
+### What's new in 1.2.0
+
+- **Quality and size now agree.** The size shown on a quality option is the size of the exact stream that gets downloaded — no more "16.7 MB" turning into 13 MB.
+- **The browser sniffer is easier to use.** Duplicate streams are collapsed, results use plain names instead of raw CDN hosts, and the button says what it does. Tapping a stream opens the right video.
+- **Smoother install experience.** The battery-optimization exemption request was removed in favour of a settings shortcut.
 
 ---
 
@@ -59,11 +65,13 @@ Paste a link or sniff a stream from the built-in browser — oP Downloader handl
 
 ### Install the signed build
 
-Grab [`app-release.apk`](app-release.apk) from the repo root, or use the [latest release](https://github.com/iamrony27/opdownloader/releases/latest):
+Download `app-release.apk` from the [latest release](https://github.com/iamrony27/opdownloader/releases/latest) and install it:
 
 ```bash
 adb install -r app-release.apk
 ```
+
+> The `app-release.apk` in the repository root is the archived v1.1.0 build, kept for reference. Always use the latest release for the current version.
 
 Upgrading over v9/v10 keeps your downloads and history.
 

@@ -154,7 +154,7 @@ private const val MAX_CANDIDATES = 30
 
 /** Quick filters offered in the sniffer sheet. */
 private val sizeFilters = longArrayOf(0L, 1_000_000L, 5_000_000L, 20_000_000L)
-private val sizeFilterLabels = listOf("All", "> 1 MB", "> 5 MB", "> 20 MB")
+private val sizeFilterLabels = listOf("Any size", "> 1 MB", "> 5 MB", "> 20 MB")
 
 private data class SniffedVideo(
     val url: String,
@@ -166,10 +166,18 @@ private data class SniffedVideo(
 ) {
     val playlist: Boolean get() = isPlaylistUrl(url)
     val hostLabel: String
-        get() = runCatching { android.net.Uri.parse(url).host }.getOrNull()
-            ?.removePrefix("www.")
-            ?.takeIf { it.isNotBlank() }
-            ?: "stream"
+        get() {
+            val host = runCatching { android.net.Uri.parse(url).host }.getOrNull()
+                ?.removePrefix("www.")
+            return when {
+                host.isNullOrBlank() -> "stream"
+                host.contains("googlevideo") || host.contains("youtube") -> "YouTube"
+                host.contains("facebook") || host.contains("fbcdn") -> "Facebook"
+                host.contains("instagram") -> "Instagram"
+                host.contains("tiktok") -> "TikTok"
+                else -> host.take(28)
+            }
+        }
 
     val displayTitle: String
         get() {
@@ -181,7 +189,7 @@ private data class SniffedVideo(
         get() {
             if (!quality.isNullOrBlank()) return quality
             extractItagQuality(url)?.let { return it }
-            if (isWatchPageUrl(url)) return "Full Video (Auto Best)"
+            if (isWatchPageUrl(url)) return "Full video"
             return sniffType(url, mime)
         }
 
@@ -260,10 +268,19 @@ private fun extractVideoId(url: String): String? = runCatching {
 }.getOrNull()
 
 private fun isCurrentOrDirectMedia(url: String, currentUrl: String?): Boolean {
+    val currentVideoId = currentUrl?.let { extractVideoId(it) }
     if (isWatchPageUrl(url)) {
-        val currentVideoId = currentUrl?.let { extractVideoId(it) }
         val thisVideoId = extractVideoId(url)
         if (currentVideoId != null && thisVideoId != null && currentVideoId != thisVideoId) {
+            return false
+        }
+    }
+    // YouTube also fetches streams for suggested/autoplay videos in the background.
+    // Those carry their own video id; offering them would open the wrong watch page
+    // and fail with "video unavailable". Keep only the video being watched.
+    if (url.contains("googlevideo.com") || url.contains("videoplayback")) {
+        val streamId = safeQueryParam(url, "id") ?: safeQueryParam(url, "docid")
+        if (!streamId.isNullOrBlank() && currentVideoId != null && streamId != currentVideoId) {
             return false
         }
     }
@@ -422,6 +439,12 @@ private fun filterVideos(list: List<SniffedVideo>, filterIndex: Int): List<Sniff
             // Watch pages and adaptive streams carry no byte size but are still
             // the useful "download the whole thing" entries.
             filterIndex == 0 || isWatchPageUrl(video.url) || video.playlist || isStreamingUrl(video.url)
+        }
+        // Sites expose the same stream under several URLs and codecs. Keep one
+        // per title/quality/size so the list is short enough to actually use.
+        .distinctBy { v ->
+            val bucket = if (v.effectiveSize > 0L) v.effectiveSize / 1_000_000L else 0L
+            "${v.displayTitle}|${v.displayQuality}|$bucket"
         }
         .sortedWith(
             compareByDescending<SniffedVideo> { isWatchPageUrl(it.url) }
@@ -594,7 +617,7 @@ private const val SCAN_PAGE_JS = """
     if (window.location && window.location.href) {
       var h = window.location.href;
       if (h.indexOf('/watch') !== -1 || h.indexOf('/shorts/') !== -1) {
-        addItem(h, pageTitle, 'Full Video (Auto Best)', 0, 'video/web', '');
+        addItem(h, pageTitle, 'Full video', 0, 'video/web', '');
       }
     }
   } catch(e){}
@@ -847,6 +870,7 @@ fun BrowserScreen(
     var currentPageTitle by rememberSaveable { mutableStateOf<String?>(null) }
     var progress by remember { mutableFloatStateOf(0f) }
     var videos by remember { mutableStateOf<List<SniffedVideo>>(emptyList()) }
+    var clearedForUrl by remember { mutableStateOf<String?>(null) }
     var showVideos by rememberSaveable { mutableStateOf(false) }
     var adSkip by rememberSaveable { mutableStateOf(true) }
     var sizeFilter by rememberSaveable { mutableIntStateOf(0) }
@@ -873,10 +897,13 @@ fun BrowserScreen(
     val visibleVideos = remember(videos, sizeFilter) { filterVideos(videos, sizeFilter) }
     val scanning = videos.any { it.probing }
 
-    fun clearVideos() {
+    fun clearVideos(fromUser: Boolean = false) {
         videos = emptyList()
         known.clear()
         sizeFilter = 0
+        // A manual clear should stay cleared for this page; automatic scanner
+        // passes (page load, navigation) must not suppress detection.
+        clearedForUrl = if (fromUser) currentUrl else null
     }
 
     fun sniff(
@@ -888,6 +915,7 @@ fun BrowserScreen(
     ) {
         val url = raw.trim()
         if (url.isBlank()) return
+        if (clearedForUrl != null && clearedForUrl == currentUrl) return
         if (url.startsWith("data:") || url.startsWith("blob:") || url.startsWith("javascript:") || url.startsWith("about:")) return
         if (isSegmentUrl(url)) return
         if (hint == null && !looksLikeMedia(url) && !isWatchPageUrl(url)) return
@@ -958,6 +986,7 @@ fun BrowserScreen(
         val liveTitle = view.title?.replace(Regex("\\s*-\\s*YouTube\\s*$", RegexOption.IGNORE_CASE), "")?.trim()
         if (!liveUrl.isNullOrBlank() && liveUrl != currentUrl) {
             currentUrl = liveUrl
+            clearedForUrl = null
             if (!isAddressFocused) address = liveUrl
         }
         if (!liveTitle.isNullOrBlank()) {
@@ -966,7 +995,7 @@ fun BrowserScreen(
         view.evaluateJavascript(SYNC_PAGE_JS, null)
         currentUrl?.let {
             if (isWatchPageUrl(it)) {
-                sniff(it, hint = "video/web", title = currentPageTitle, quality = "Full Video (All Qualities)")
+                sniff(it, hint = "video/web", title = currentPageTitle, quality = "Full video")
             }
         }
         runCatching {
@@ -1014,6 +1043,7 @@ fun BrowserScreen(
             val liveTitle = view.title?.replace(Regex("\\s*-\\s*YouTube\\s*$", RegexOption.IGNORE_CASE), "")?.trim()
             if (!liveUrl.isNullOrBlank() && liveUrl != currentUrl) {
                 currentUrl = liveUrl
+                clearedForUrl = null
                 if (!isAddressFocused) address = liveUrl
             }
             if (!liveTitle.isNullOrBlank() && liveTitle != currentPageTitle) {
@@ -1068,10 +1098,10 @@ fun BrowserScreen(
             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                 Spacer(Modifier.height(8.dp))
                 AppHeader(
-                    title = "Web Sniffer",
+                    title = "Browser",
                     subtitle = when {
-                        currentUrl == null -> "Open a site, grab the stream"
-                        scanning -> "Checking detected media sizes…"
+                        currentUrl == null -> "Watch a video, then download it in one tap"
+                        scanning -> "Looking for videos on this page…"
                         else -> null // hide the subtitle while browsing to give the page more height
                     },
                     trailing = {
@@ -1105,7 +1135,7 @@ fun BrowserScreen(
                             }
                             RoundIconButton(
                                 icon = Icons.Default.Home,
-                                contentDescription = "Home",
+                                contentDescription = "Start page",
                                 onClick = {
                                     currentUrl = null
                                     address = ""
@@ -1219,10 +1249,10 @@ fun BrowserScreen(
                             }
                             Spacer(Modifier.width(10.dp))
                             Text(
-                                "Standard web browser with saved logins & cookies. Play a video or open a post, then tap the floating sniffer to pick a stream.",
+                                "Browse any site and play a video. A floating button shows what we found — tap it to choose a video and download it. Your logins and cookies stay here.",
                                 color = colors.textSecondary,
-                                fontSize = 11.sp,
-                                lineHeight = 16.sp,
+                                fontSize = 12.sp,
+                                lineHeight = 17.sp,
                             )
                         }
                     }
@@ -1275,10 +1305,10 @@ fun BrowserScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                "Some sites (YouTube, Instagram) block in-app browsers. Use the analyzer on Home for those — it supports 1000+ sites through yt-dlp.",
+                                "If a site won't open here, use Analyze on Home instead — it works with 1000+ sites.",
                                 color = colors.textMuted,
-                                fontSize = 10.sp,
-                                lineHeight = 14.sp,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp,
                             )
                         }
                     }
@@ -1350,7 +1380,7 @@ fun BrowserScreen(
                                                             raw = liveUrl,
                                                             hint = "video/web",
                                                             title = cleanTitle.ifBlank { null },
-                                                            quality = "Full Video (All Qualities)",
+                                                            quality = "Full video",
                                                         )
                                                     }
                                                 }
@@ -1552,19 +1582,27 @@ fun BrowserScreen(
                 onAdSkip = { adSkip = it },
                 onPick = { url ->
                     showVideos = false
+                    val pageId = currentUrl?.let { extractVideoId(it) }
+                    val streamId = if (url.contains("googlevideo.com") || url.contains("videoplayback")) {
+                        safeQueryParam(url, "id") ?: safeQueryParam(url, "docid")
+                    } else null
                     val targetUrl = when {
                         isWatchPageUrl(url) -> url
-                        url.contains("googlevideo.com") || url.contains("videoplayback") -> {
-                            val id = safeQueryParam(url, "id") ?: safeQueryParam(url, "docid")
-                            if (!id.isNullOrBlank()) "https://www.youtube.com/watch?v=$id"
-                            else currentUrl?.takeIf { isWatchPageUrl(it) } ?: url
-                        }
+                        // Stream belongs to the video on screen: hand the analyzer the
+                        // real watch page so it can offer every quality with correct sizes.
+                        streamId != null && pageId != null && streamId == pageId ->
+                            "https://www.youtube.com/watch?v=$pageId"
+                        // Stream from another page: download this exact URL instead of
+                        // guessing a watch page that may be unavailable.
                         else -> url
                     }
                     nav.navigate("analyzer/${android.net.Uri.encode(targetUrl)}")
                 },
-                onClear = { clearVideos() },
-                onScan = { scanPage() },
+                onClear = { clearVideos(fromUser = true) },
+                onScan = {
+                    clearedForUrl = null
+                    scanPage()
+                },
                 onDismiss = { showVideos = false },
             )
         }
@@ -1602,7 +1640,7 @@ private fun DraggableSnifferFab(
                 )
             }
             .semantics(mergeDescendants = true) {
-                contentDescription = "SnifferFab"
+                contentDescription = "Videos found on this page. Tap to choose one to download. Drag to move this button."
             }
             .pointerInput(containerWidth, containerHeight, fabSize) {
                 val touchSlop = viewConfiguration.touchSlop
@@ -1670,8 +1708,8 @@ private fun DraggableSnifferFab(
             Text(
                 when {
                     count > 0 -> "$count video${if (count == 1) "" else "s"} found"
-                    scanning -> "Scanning page…"
-                    else -> "Sniff videos"
+                    scanning -> "Looking for videos…"
+                    else -> "Find videos"
                 },
                 color = colors.onPrimaryDeep,
                 fontSize = 12.sp,
@@ -1679,7 +1717,7 @@ private fun DraggableSnifferFab(
                 maxLines = 1,
             )
             Text(
-                if (scanning) "Checking sizes…" else "Tap to pick a stream",
+                if (scanning) "Checking sizes…" else "Tap to choose and download",
                 color = colors.onPrimaryDeep.copy(alpha = 0.72f),
                 fontSize = 9.sp,
                 maxLines = 1,
@@ -1726,7 +1764,7 @@ private fun SnifferSheet(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Videos on this page",
+                    "Videos found on this page",
                     color = colors.textPrimary,
                     fontSize = 17.sp,
                     fontWeight = FontWeight.ExtraBold,
@@ -1741,10 +1779,10 @@ private fun SnifferSheet(
             }
             Spacer(Modifier.height(4.dp))
             Text(
-                "Streams detected by the sniffer, filtered by size. Tiny thumbnails and bumps under ${humanBytes(MIN_VIDEO_BYTES)} are hidden.",
+                "We watch the page as it loads and list the videos it plays. Pick one to see its qualities and download. Tiny thumbnails are hidden.",
                 color = colors.textSecondary,
-                fontSize = 11.sp,
-                lineHeight = 15.sp,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
             )
             Spacer(Modifier.height(12.dp))
 
@@ -1773,14 +1811,14 @@ private fun SnifferSheet(
                 CardSurface(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(15.dp)) {
                         Text(
-                            "No matching video yet",
+                            "No videos found yet",
                             color = colors.textPrimary,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "Start the video in the page, then tap Scan page. Some players only reveal the stream after playback begins.",
+                            "Play the video on the page first, then tap Scan page. Some sites only reveal the stream once playback starts.",
                             color = colors.textSecondary,
                             fontSize = 10.sp,
                             lineHeight = 14.sp,
@@ -1864,10 +1902,10 @@ private fun SnifferVideoRow(
     val colors = LocalAppColors.current
     val sizeText = when {
         video.effectiveSize > 0L -> humanBytes(video.effectiveSize)
-        video.probing -> "checking size…"
-        isWatchPageUrl(video.url) -> "Full Video (Multi-res)"
-        video.playlist || isStreamingUrl(video.url) -> "Adaptive Stream"
-        else -> "Ready"
+        video.probing -> "Checking size…"
+        isWatchPageUrl(video.url) -> "All qualities"
+        video.playlist || isStreamingUrl(video.url) -> "Video stream"
+        else -> "Ready to download"
     }
     val isAudio = video.displayQuality.contains("Audio", ignoreCase = true) ||
         video.mime?.startsWith("audio/") == true
@@ -1974,7 +2012,7 @@ private fun SnifferVideoRow(
                     .padding(horizontal = 8.dp, vertical = 5.dp),
             ) {
                 Text(
-                    "GET",
+                    "Download",
                     color = colors.onPrimaryDeep,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.ExtraBold,
