@@ -12,6 +12,7 @@ Paste a link or sniff a stream from the built-in browser — oP Downloader handl
 [![Android](https://img.shields.io/badge/Android-API%2026%2B-3DDC84?style=flat-square)](https://developer.android.com/)
 [![stack](https://img.shields.io/badge/stack-Kotlin%20%2B%20Compose-A97BFF?style=flat-square)](#architecture)
 [![engine](https://img.shields.io/badge/engine-OkHttp%20%2B%20yt--dlp%20%2B%20FFmpeg-F59E0B?style=flat-square)](#how-it-works)
+[![license](https://img.shields.io/badge/license-MIT-4C1?style=flat-square)](LICENSE)
 
 [![Get it on Orion Store](https://raw.githubusercontent.com/RookieEnough/Orion-Store/refs/heads/main/assets/orion-badge.png)](https://rookieenough.github.io/Orion-Data/app/?id=opdownloader)
 
@@ -239,6 +240,8 @@ Tested on an Android 15 / API 37 arm64 device over wireless adb:
 <div align="center">
 
 Built with Kotlin, Jetpack Compose, OkHttp, yt-dlp and FFmpeg.
+
+Licensed under the [MIT License](LICENSE).
 
 <a href="https://github.com/iamrony27/opdownloader/releases/latest"><strong>Get the latest APK →</strong></a>
 
